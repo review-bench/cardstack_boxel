@@ -691,6 +691,99 @@ export class MyCard extends CardDef {
       );
     });
 
+    // Verify /_lint loads host's actual lint config rather than a
+    // hand-maintained ESLint subset, and that ember-template-lint runs
+    // alongside ESLint. None of these rules fire if either piece is missing.
+
+    test('ember/no-empty-glimmer-component-classes fires (from host plugin:ember/recommended-gts)', async function (assert) {
+      let response = await request
+        .post('/_lint')
+        .set(
+          'Authorization',
+          `Bearer ${createJWT(testRealm, 'john', ['read', 'write'])}`,
+        )
+        .set('X-HTTP-Method-Override', 'QUERY')
+        .set('Accept', 'application/json')
+        .set('X-Filename', 'sample.gts')
+        .send(`import Component from '@glimmer/component';
+
+export default class Sample extends Component {
+  <template>
+    <p>Hello</p>
+  </template>
+}
+`);
+      assert.strictEqual(response.status, 200);
+      let body = JSON.parse(response.text);
+      let messages = body.messages as { ruleId: string }[];
+      assert.ok(
+        messages.some(
+          (m) => m.ruleId === 'ember/no-empty-glimmer-component-classes',
+        ),
+        'host plugin:ember/recommended-gts rule should be reported',
+      );
+    });
+
+    test('@cardstack/boxel/no-raf-for-state fires (host rule, was missing from inline config)', async function (assert) {
+      let response = await request
+        .post('/_lint')
+        .set(
+          'Authorization',
+          `Bearer ${createJWT(testRealm, 'john', ['read', 'write'])}`,
+        )
+        .set('X-HTTP-Method-Override', 'QUERY')
+        .set('Accept', 'application/json')
+        .set('X-Filename', 'sample.gts')
+        .send(`import Component from '@glimmer/component';
+import { tracked } from '@glimmer/tracking';
+
+export default class Sample extends Component {
+  @tracked count = 0;
+  bump = () => {
+    requestAnimationFrame(() => { this.count = this.count + 1; });
+  };
+}
+`);
+      assert.strictEqual(response.status, 200);
+      let body = JSON.parse(response.text);
+      let messages = body.messages as { ruleId: string; severity: number }[];
+      let hit = messages.find(
+        (m) => m.ruleId === '@cardstack/boxel/no-raf-for-state',
+      );
+      assert.ok(hit, '@cardstack/boxel/no-raf-for-state should be reported');
+      assert.strictEqual(hit?.severity, 2, 'no-raf-for-state is error severity');
+    });
+
+    test('ember-template-lint runs alongside ESLint (no-invalid-interactive)', async function (assert) {
+      let response = await request
+        .post('/_lint')
+        .set(
+          'Authorization',
+          `Bearer ${createJWT(testRealm, 'john', ['read', 'write'])}`,
+        )
+        .set('X-HTTP-Method-Override', 'QUERY')
+        .set('Accept', 'application/json')
+        .set('X-Filename', 'interactive.gts')
+        .send(`<template>
+  <div onclick={{this.doThing}}>{{@arg}}</div>
+</template>
+`);
+      assert.strictEqual(response.status, 200);
+      let body = JSON.parse(response.text);
+      let messages = body.messages as {
+        source: string;
+        ruleId: string | null;
+      }[];
+      assert.ok(
+        messages.some(
+          (m) =>
+            m.source === 'template-lint' &&
+            m.ruleId === 'no-invalid-interactive',
+        ),
+        'template-lint no-invalid-interactive should be reported with source=template-lint',
+      );
+    });
+
     test('handles large files within reasonable time', async function (assert) {
       // Create a large file with many imports and classes
       let largeContent = `import { CardDef } from 'https://cardstack.com/base/card-api';\n`;
